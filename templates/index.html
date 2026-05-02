@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>本地漫画阅读器</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div id="app">
+        <aside id="sidebar">
+            <h1>本地漫画阅读器</h1>
+            <div id="libraryPath" class="library-path"></div>
+
+            <input id="chapterSearch" type="search" placeholder="搜索章节（标题或路径）">
+
+            <div class="sidebar-actions">
+                <button id="rescanBtn" type="button">重新扫描</button>
+                <button id="lastReadBtn" type="button">继续上次阅读</button>
+            </div>
+
+            <section id="voicePanel" class="voice-panel" aria-label="对白播放控制">
+                <div class="voice-panel-title">对白播放</div>
+
+                <div class="voice-actions">
+                    <button id="voiceToggleBtn" type="button">播放: 开</button>
+                    <button id="voiceReplayBtn" type="button">重播当前页</button>
+                </div>
+
+                <div class="voice-speed-row">
+                    <span class="voice-speed-label">播放速度</span>
+                    <div class="voice-speed-buttons" role="group" aria-label="播放速度选择">
+                        <button class="voice-speed-btn" type="button" data-voice-rate="1">1x</button>
+                        <button class="voice-speed-btn" type="button" data-voice-rate="2">2x</button>
+                        <button class="voice-speed-btn" type="button" data-voice-rate="3">3x</button>
+                    </div>
+                </div>
+
+                <!-- 已移除排序模式选择，使用内置最佳识别策略 -->
+
+                <div id="voiceHint" class="voice-hint">切页后自动播放当前页对白，并后台预识别下一话。</div>
+            </section>
+
+            <div class="sidebar-meta" id="chapterCount">章节数: 0</div>
+            <ul id="chapterList"></ul>
+        </aside>
+
+        <main id="main">
+            <header id="toolbar">
+                <div class="toolbar-title" id="chapterTitle">请选择章节</div>
+
+                <div class="toolbar-actions">
+                    <button id="prevChapterBtn" type="button">上一话 (B)</button>
+                    <button id="nextChapterBtn" type="button">下一话 (N)</button>
+                    <button id="prevPageBtn" type="button">上一页 (V)</button>
+                    <button id="nextPageBtn" type="button">下一页 (空格)</button>
+
+                    <label for="widthRange">页面宽度</label>
+                    <input id="widthRange" type="number" min="30" max="100" step="0.01" value="82.00" inputmode="decimal" aria-label="页面宽度百分比">
+                    <span class="width-unit">%</span>
+
+                    <button id="fullscreenBtn" class="toolbar-right" type="button">全屏 (F)</button>
+                </div>
+            </header>
+
+            <div id="reader" tabindex="0">
+                <div id="pages"></div>
+            </div>
+
+            <footer id="statusBar">
+                <span id="statusText">准备就绪</span>
+                <span id="progressText">0%</span>
+            </footer>
+        </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
