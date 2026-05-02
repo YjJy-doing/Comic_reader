@@ -390,6 +390,14 @@ class OCRService:
             return True
         if "腾讯云漫" in normalized:
             return True
+        if "腾机运漫" in normalized:
+            return True
+        # 例如「腾*运漫」「腾x运漫」等，第二个字常被 OCR 误识别
+        if re.search(r"腾[\w\u4e00-\u9fff]?运漫", normalized):
+            return True
+        # 例如「**运漫」清洗后通常会变成「运漫」
+        if normalized == "运漫":
+            return True
         if "腾讯" in normalized and ("动漫" in normalized or "漫画" in normalized or "云漫" in normalized):
             return True
         if "acqqcom" in normalized or "qqcom" in normalized:
