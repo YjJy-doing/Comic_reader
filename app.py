@@ -33,6 +33,14 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif"}
 OCR_MIN_LONGEST = 1400
 OCR_MAX_LONGEST = 2200
 OCR_PREFETCH_MAX_TASKS = 48
+WATERMARK_PHRASES = [ //在此处追加新水印即可
+    "腾讯动漫",
+]
+WATERMARK_LATIN_TOKENS = {
+    "acqqcom",
+    "qqcom",
+}
+WATERMARK_FUZZY_MAX_DISTANCE = 1
 
 
 def natural_key(value: str) -> list[Any]:
@@ -380,28 +388,87 @@ class OCRService:
         return text.strip()
 
     @staticmethod
+    def _levenshtein_distance(left: str, right: str, max_distance: int) -> int:
+        """计算编辑距离；当距离已超过阈值时尽早返回。"""
+        if left == right:
+            return 0
+
+        left_len = len(left)
+        right_len = len(right)
+        if abs(left_len - right_len) > max_distance:
+            return max_distance + 1
+
+        previous = list(range(right_len + 1))
+        for left_index, left_char in enumerate(left, start=1):
+            current = [left_index]
+            row_min = current[0]
+
+            for right_index, right_char in enumerate(right, start=1):
+                cost = 0 if left_char == right_char else 1
+                value = min(
+                    previous[right_index] + 1,
+                    current[right_index - 1] + 1,
+                    previous[right_index - 1] + cost,
+                )
+                current.append(value)
+                if value < row_min:
+                    row_min = value
+
+            if row_min > max_distance:
+                return max_distance + 1
+
+            previous = current
+
+        return previous[-1]
+
+    @staticmethod
+    def _contains_fuzzy_phrase(normalized_text: str, phrase: str, max_distance: int) -> bool:
+        if not phrase:
+            return False
+
+        if phrase in normalized_text:
+            return True
+
+        phrase_len = len(phrase)
+        min_len = max(1, phrase_len - max_distance)
+        max_len = phrase_len + max_distance
+        text_len = len(normalized_text)
+
+        for start in range(text_len):
+            for candidate_len in range(min_len, max_len + 1):
+                end = start + candidate_len
+                if end > text_len:
+                    continue
+
+                candidate = normalized_text[start:end]
+                distance = OCRService._levenshtein_distance(candidate, phrase, max_distance)
+                if distance <= max_distance:
+                    return True
+
+        return False
+
+    @staticmethod
     def _looks_like_watermark(text: str) -> bool:
         normalized = re.sub(r"[^\w\u4e00-\u9fff]", "", text or "").lower()
         if not normalized:
             return False
 
-        # 腾讯动漫 及其 OCR 常见误识别变体
-        if "腾讯动漫" in normalized:
+        for latin_token in WATERMARK_LATIN_TOKENS:
+            if latin_token in normalized:
+                return True
+
+        # 通过编辑距离匹配 OCR 近似词：例如「腾讯运漫」「腾机动漫」等。
+        for phrase in WATERMARK_PHRASES:
+            if OCRService._contains_fuzzy_phrase(
+                normalized,
+                phrase,
+                WATERMARK_FUZZY_MAX_DISTANCE,
+            ):
+                return True
+
+        if "腾讯" in normalized and ("动漫" in normalized or "漫画" in normalized):
             return True
-        if "腾讯云漫" in normalized:
-            return True
-        if "腾机运漫" in normalized:
-            return True
-        # 例如「腾*运漫」「腾x运漫」等，第二个字常被 OCR 误识别
-        if re.search(r"腾[\w\u4e00-\u9fff]?运漫", normalized):
-            return True
-        # 例如「**运漫」清洗后通常会变成「运漫」
-        if normalized == "运漫":
-            return True
-        if "腾讯" in normalized and ("动漫" in normalized or "漫画" in normalized or "云漫" in normalized):
-            return True
-        if "acqqcom" in normalized or "qqcom" in normalized:
-            return True
+
         # 含「腾讯」且字数很少（1-4 字）的孤立文本框大概率是水印
         if "腾讯" in normalized and len(normalized) <= 4:
             return True
