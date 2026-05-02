@@ -26,7 +26,7 @@ const state = {
     },
 };
 
-const SPACE_STEP_RATIO = 0.9735;
+const SPACE_STEP_RATIO = 0.966; // 页面半屏状态下的“切页标准”可调变量；  页面全屏或全屏模式下调“页面宽度”即可。
 const MIN_PAGE_WIDTH = 30;
 const DEFAULT_PAGE_WIDTH = 82;
 const PAGE_WIDTH_DECIMALS = 2;
