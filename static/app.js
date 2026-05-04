@@ -6,6 +6,10 @@ const state = {
         last_chapter_id: null,
         chapters: {},
     },
+    libraryConfig: {
+        library_path: "",
+        library_name: "",
+    },
     saveTimer: null,
     pageSyncTimer: null,
     chapterLoadToken: 0,
@@ -32,6 +36,7 @@ const DEFAULT_PAGE_WIDTH = 82;
 const PAGE_WIDTH_DECIMALS = 2;
 const PAGE_WIDTH_STEP = 0.01;
 const PAGE_WIDTH_STORAGE_KEY = "manga_reader_page_width";
+const THEME_STORAGE_KEY = "manga_reader_theme";
 
 const PAGE_ANCHOR_RATIO = 0.62;
 const PAGE_SYNC_DEBOUNCE_MS = 140;
@@ -46,6 +51,10 @@ const PREFETCH_NEXT_CHAPTER_LIMIT = 12;
 
 const dom = {
     libraryPath: document.getElementById("libraryPath"),
+    libraryNameInput: document.getElementById("libraryNameInput"),
+    libraryPathInput: document.getElementById("libraryPathInput"),
+    applyLibraryBtn: document.getElementById("applyLibraryBtn"),
+    libraryHint: document.getElementById("libraryHint"),
     chapterSearch: document.getElementById("chapterSearch"),
     chapterList: document.getElementById("chapterList"),
     chapterCount: document.getElementById("chapterCount"),
@@ -59,6 +68,7 @@ const dom = {
     prevPageBtn: document.getElementById("prevPageBtn"),
     nextPageBtn: document.getElementById("nextPageBtn"),
     widthRange: document.getElementById("widthRange"),
+    themeToggleBtn: document.getElementById("themeToggleBtn"),
     fullscreenBtn: document.getElementById("fullscreenBtn"),
     rescanBtn: document.getElementById("rescanBtn"),
     lastReadBtn: document.getElementById("lastReadBtn"),
@@ -83,6 +93,80 @@ function setVoiceHint(message, isError = false) {
 
     dom.voiceHint.textContent = message;
     dom.voiceHint.classList.toggle("error", Boolean(isError));
+}
+
+function setLibraryHint(message, isError = false) {
+    if (!dom.libraryHint) {
+        return;
+    }
+
+    dom.libraryHint.textContent = message;
+    dom.libraryHint.classList.toggle("error", Boolean(isError));
+}
+
+function normalizeLibraryConfig(config) {
+    const raw = config && typeof config === "object" ? config : {};
+    return {
+        library_path: String(raw.library_path || "").trim(),
+        library_name: String(raw.library_name || "").trim(),
+    };
+}
+
+function getSystemTheme() {
+    if (typeof window !== "undefined" && window.matchMedia) {
+        return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    return "light";
+}
+
+function loadTheme() {
+    try {
+        const raw = localStorage.getItem(THEME_STORAGE_KEY);
+        if (raw === "dark" || raw === "light") {
+            return raw;
+        }
+    } catch {
+        // Ignore storage failures.
+    }
+    return getSystemTheme();
+}
+
+function saveTheme(theme) {
+    try {
+        localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+        // Ignore storage failures.
+    }
+}
+
+function updateThemeToggleUi(theme) {
+    if (!dom.themeToggleBtn) {
+        return;
+    }
+
+    dom.themeToggleBtn.textContent = theme === "dark" ? "深色" : "浅色";
+    dom.themeToggleBtn.dataset.theme = theme;
+}
+
+function applyTheme(theme, options = {}) {
+    const { persist = true } = options;
+    const normalized = theme === "dark" ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", normalized);
+    updateThemeToggleUi(normalized);
+    if (persist) {
+        saveTheme(normalized);
+    }
+}
+
+function toggleTheme() {
+    const current = document.documentElement.getAttribute("data-theme") || "light";
+    const next = current === "dark" ? "light" : "dark";
+    applyTheme(next, { persist: true });
+}
+
+function initTheme() {
+    const theme = loadTheme();
+    applyTheme(theme, { persist: false });
 }
 
 function updateProgressText() {
@@ -798,6 +882,26 @@ async function loadProgress() {
     }
 }
 
+async function loadLibraryConfig() {
+    try {
+        const payload = await requestJson("/api/library-config");
+        const config = normalizeLibraryConfig(payload.config || {});
+        state.libraryConfig = config;
+
+        if (dom.libraryNameInput) {
+            dom.libraryNameInput.value = config.library_name;
+        }
+        if (dom.libraryPathInput) {
+            dom.libraryPathInput.value = config.library_path;
+        }
+
+        setLibraryHint("优先完整路径；留空则使用文件夹名。", false);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setLibraryHint(`配置读取失败: ${message}`, true);
+    }
+}
+
 async function loadLibrary() {
     const library = await requestJson("/api/library");
     state.chapters = library.chapters || [];
@@ -805,6 +909,91 @@ async function loadLibrary() {
 
     dom.libraryPath.textContent = `目录: ${library.library_root}`;
     dom.chapterCount.textContent = `章节数: ${library.chapter_count}`;
+}
+
+function showEmptyLibrary(message) {
+    dom.pages.innerHTML = '<div class="empty">没有扫描到漫画图片目录</div>';
+    dom.chapterTitle.textContent = "没有可阅读章节";
+    setStatus(message || "请检查漫画目录是否正确");
+}
+
+function getInitialChapterId() {
+    const lastChapterId = state.progress.last_chapter_id;
+    if (lastChapterId && state.chapterMap.has(lastChapterId)) {
+        return lastChapterId;
+    }
+
+    if (state.chapters.length > 0) {
+        return state.chapters[0].id;
+    }
+
+    return null;
+}
+
+async function openDefaultChapter() {
+    if (state.chapters.length === 0) {
+        showEmptyLibrary("请检查漫画目录是否正确");
+        return;
+    }
+
+    const targetChapterId = getInitialChapterId();
+    if (!targetChapterId) {
+        showEmptyLibrary("请检查漫画目录是否正确");
+        return;
+    }
+
+    await openChapter(targetChapterId, true);
+}
+
+async function applyLibraryConfig() {
+    const libraryPath = dom.libraryPathInput ? dom.libraryPathInput.value.trim() : "";
+    const libraryName = dom.libraryNameInput ? dom.libraryNameInput.value.trim() : "";
+
+    if (!libraryPath && !libraryName) {
+        setLibraryHint("请填写完整路径或文件夹名", true);
+        setStatus("请填写完整路径或文件夹名");
+        return;
+    }
+
+    setLibraryHint("正在切换漫画库...", false);
+    setStatus("正在切换漫画库...");
+
+    try {
+        const payload = await requestJson("/api/library-config", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                library_path: libraryPath,
+                library_name: libraryName,
+            }),
+        });
+
+        const config = normalizeLibraryConfig(payload.config || { library_path: libraryPath, library_name: libraryName });
+        state.libraryConfig = config;
+        if (dom.libraryNameInput) {
+            dom.libraryNameInput.value = config.library_name;
+        }
+        if (dom.libraryPathInput) {
+            dom.libraryPathInput.value = config.library_path;
+        }
+
+        clearDialogueRuntimeCache();
+        state.currentChapterId = null;
+        state.currentImageIndex = null;
+
+        await loadLibrary();
+        renderChapterList();
+        await openDefaultChapter();
+
+        setLibraryHint("漫画库已切换", false);
+        setStatus("漫画库已切换");
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setLibraryHint(`切换失败: ${message}`, true);
+        setStatus(`切换失败: ${message}`);
+    }
 }
 
 async function handleRescan() {
@@ -1125,8 +1314,16 @@ function bindEvents() {
     if (dom.fullscreenBtn) {
         dom.fullscreenBtn.addEventListener("click", toggleFullscreen);
     }
+    if (dom.themeToggleBtn) {
+        dom.themeToggleBtn.addEventListener("click", toggleTheme);
+    }
     if (dom.rescanBtn) {
         dom.rescanBtn.addEventListener("click", handleRescan);
+    }
+    if (dom.applyLibraryBtn) {
+        dom.applyLibraryBtn.addEventListener("click", () => {
+            void applyLibraryConfig();
+        });
     }
 
     if (dom.lastReadBtn) {
@@ -1235,6 +1432,7 @@ function bindEvents() {
 }
 
 async function init() {
+    initTheme();
     ensureToolbarButtons();
     syncShortcutLabels();
     bindEvents();
@@ -1250,23 +1448,11 @@ async function init() {
     const appliedWidth = applyPageWidth(initialWidth, { syncInput: true, formatInput: true });
     savePageWidth(appliedWidth);
 
+    await loadLibraryConfig();
     await loadProgress();
     await loadLibrary();
     renderChapterList();
-
-    if (state.chapters.length === 0) {
-        dom.pages.innerHTML = '<div class="empty">没有扫描到漫画图片目录</div>';
-        dom.chapterTitle.textContent = "没有可阅读章节";
-        setStatus("请检查漫画目录是否正确");
-        return;
-    }
-
-    let targetChapterId = state.progress.last_chapter_id;
-    if (!targetChapterId || !state.chapterMap.has(targetChapterId)) {
-        targetChapterId = state.chapters[0].id;
-    }
-
-    await openChapter(targetChapterId, true);
+    await openDefaultChapter();
 }
 
 init();

@@ -23,11 +23,14 @@ if errorlevel 1 (
 )
 
 set "LIB=%~1"
-if "%LIB%"=="" set "LIB=..\一人之下_漫画"
 set "SCRIPT_DIR=%CD%"
 
 echo.
-echo 使用漫画目录: %LIB%
+if "%LIB%"=="" (
+	echo 使用漫画目录: (由 reader.config.json 或默认值决定)
+) else (
+	echo 使用漫画目录: %LIB%
+)
 
 call :check_running
 if not errorlevel 1 (
@@ -37,7 +40,7 @@ if not errorlevel 1 (
 )
 
 echo 正在后台启动服务...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $argsList=@('app.py','--library',$env:LIB,'--host','127.0.0.1','--port','7878','--engine','auto'); $workDir=$env:SCRIPT_DIR; if ([string]::IsNullOrWhiteSpace($workDir)) { throw '缺少启动目录' }; $p=Start-Process -FilePath 'python' -ArgumentList $argsList -WorkingDirectory $workDir -WindowStyle Hidden -PassThru; New-Item -ItemType Directory -Path 'data' -Force | Out-Null; $p.Id | Set-Content -Path 'data\\server.pid' -Encoding ascii"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $argsList=@('app.py'); if ($env:LIB) { $argsList += @('--library',$env:LIB) }; $argsList += @('--host','127.0.0.1','--port','7878','--engine','auto'); $workDir=$env:SCRIPT_DIR; if ([string]::IsNullOrWhiteSpace($workDir)) { throw '缺少启动目录' }; $p=Start-Process -FilePath 'python' -ArgumentList $argsList -WorkingDirectory $workDir -WindowStyle Hidden -PassThru; New-Item -ItemType Directory -Path 'data' -Force | Out-Null; $p.Id | Set-Content -Path 'data\\server.pid' -Encoding ascii"
 if errorlevel 1 (
 	echo [错误] 启动后台服务失败。
 	pause

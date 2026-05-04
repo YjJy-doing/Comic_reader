@@ -28,13 +28,17 @@ except ImportError:
     waitress_serve = None
 
 APP_DIR = Path(__file__).resolve().parent
+CONFIG_PATH = APP_DIR / "reader.config.json"
 DEFAULT_LIBRARY_DIR = (APP_DIR.parent / "一人之下_漫画").resolve()
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif"}
 OCR_MIN_LONGEST = 1400
 OCR_MAX_LONGEST = 2200
 OCR_PREFETCH_MAX_TASKS = 48
-WATERMARK_PHRASES = [ //在此处追加新水印即可
+WATERMARK_PHRASES = [  # 在此处追加新水印即可
     "腾讯动漫",
+    "腾讯云加曼",
+    "腾讯运加曼",
+    "暙讯运漫",
 ]
 WATERMARK_LATIN_TOKENS = {
     "acqqcom",
@@ -46,6 +50,72 @@ WATERMARK_FUZZY_MAX_DISTANCE = 1
 def natural_key(value: str) -> list[Any]:
     parts = re.split(r"(\d+)", value)
     return [int(part) if part.isdigit() else part.lower() for part in parts]
+
+
+def _default_reader_config() -> dict[str, str]:
+    return {
+        "library_path": "",
+        "library_name": "",
+    }
+
+
+def _normalize_reader_config(config: dict[str, Any]) -> dict[str, str]:
+    if not isinstance(config, dict):
+        return _default_reader_config()
+
+    return {
+        "library_path": str(config.get("library_path", "")).strip(),
+        "library_name": str(config.get("library_name", "")).strip(),
+    }
+
+
+def _load_reader_config() -> dict[str, str]:
+    if not CONFIG_PATH.exists():
+        return _default_reader_config()
+
+    try:
+        raw_data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return _default_reader_config()
+
+    if not isinstance(raw_data, dict):
+        return _default_reader_config()
+
+    return _normalize_reader_config(raw_data)
+
+
+def _save_reader_config(config: dict[str, Any]) -> dict[str, str]:
+    normalized = _normalize_reader_config(config)
+    temp_path = CONFIG_PATH.with_suffix(".tmp")
+    temp_path.write_text(
+        json.dumps(normalized, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    temp_path.replace(CONFIG_PATH)
+    return normalized
+
+
+def _resolve_config_path(value: str) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = APP_DIR / path
+    return path.resolve()
+
+
+def resolve_library_root(cli_value: str | None) -> Path:
+    if cli_value:
+        return Path(cli_value).expanduser().resolve()
+
+    config = _load_reader_config()
+    library_path = config.get("library_path", "")
+    if library_path:
+        return _resolve_config_path(library_path)
+
+    library_name = config.get("library_name", "")
+    if library_name:
+        return (APP_DIR.parent / library_name).resolve()
+
+    return DEFAULT_LIBRARY_DIR
 
 
 @dataclass(frozen=True)
@@ -113,6 +183,11 @@ class MangaIndex:
             self._chapters = chapters
             self._chapter_map = chapter_map
             self._chapter_order = chapter_order
+
+    def update_library_root(self, library_root: Path) -> None:
+        with self._lock:
+            self.library_root = library_root
+        self.reload()
 
     def library_summary(self) -> list[dict[str, Any]]:
         with self._lock:
@@ -1513,6 +1588,7 @@ def create_app(library_root: Path) -> Flask:
     manga_index = MangaIndex(library_root)
     progress_store = ProgressStore(APP_DIR / "data" / "progress.json")
     ocr_service = OCRService(manga_index)
+    library_update_lock = threading.Lock()
 
     @app.get("/")
     def home() -> str:
@@ -1525,6 +1601,55 @@ def create_app(library_root: Path) -> Flask:
                 "library_root": str(manga_index.library_root),
                 "chapter_count": manga_index.chapter_count(),
                 "chapters": manga_index.library_summary(),
+            }
+        )
+
+    @app.get("/api/library-config")
+    def api_library_config() -> Any:
+        config = _load_reader_config()
+        return jsonify(
+            {
+                "config": config,
+                "library_root": str(manga_index.library_root),
+            }
+        )
+
+    @app.post("/api/library-config")
+    def api_library_config_update() -> Any:
+        payload = request.get_json(silent=True) or {}
+        request_config = _normalize_reader_config(payload)
+        library_path = request_config.get("library_path", "")
+        library_name = request_config.get("library_name", "")
+
+        if library_path:
+            library_root = _resolve_config_path(library_path)
+            config_to_save = {
+                "library_path": library_path,
+                "library_name": "",
+            }
+        elif library_name:
+            library_root = (APP_DIR.parent / library_name).resolve()
+            config_to_save = {
+                "library_path": "",
+                "library_name": library_name,
+            }
+        else:
+            abort(400, description="library_path 或 library_name 至少填写一个")
+
+        if not library_root.exists() or not library_root.is_dir():
+            abort(400, description=f"漫画目录不存在: {library_root}")
+
+        with library_update_lock:
+            _save_reader_config(config_to_save)
+            manga_index.update_library_root(library_root)
+            ocr_service.clear_cache()
+
+        return jsonify(
+            {
+                "ok": True,
+                "library_root": str(manga_index.library_root),
+                "chapter_count": manga_index.chapter_count(),
+                "config": config_to_save,
             }
         )
 
@@ -1661,8 +1786,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Windows 自用本地漫画阅读器")
     parser.add_argument(
         "--library",
-        default=str(DEFAULT_LIBRARY_DIR),
-        help="漫画根目录，默认会尝试使用脚本同级的 一人之下_漫画 目录",
+        default=None,
+        help=(
+            "漫画根目录；优先使用 --library，其次读取 reader.config.json 中的 "
+            "library_path 或 library_name，默认脚本同级的 一人之下_漫画 目录"
+        ),
     )
     parser.add_argument("--host", default="127.0.0.1", help="监听地址，默认 127.0.0.1")
     parser.add_argument("--port", type=int, default=7878, help="监听端口，默认 7878")
@@ -1677,7 +1805,7 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     args = parse_args()
-    library_root = Path(args.library).expanduser().resolve()
+    library_root = resolve_library_root(args.library)
 
     if not library_root.exists() or not library_root.is_dir():
         raise SystemExit(f"漫画目录不存在: {library_root}")

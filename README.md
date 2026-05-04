@@ -16,6 +16,8 @@ A lightweight, locally hosted comic reader designed for folder-based comic image
 -   **Reading progress** - Automatically saves per-chapter scroll ratio and current page index, then restores on restart.
 -   **Keyboard navigation** - B/N for chapter switching, Space/V for page turning, F for fullscreen.
 -   **Adjustable page width** - Percentage input with precision up to two decimal places.
+-   **Theme toggle** - Switch between light and dark UI themes.
+-   **Library switch** - Change the active comic library directly in the sidebar.
 -   **Hot rescan** - One-click rescan after adding new chapters, no service restart required.
 -   **OCR dialogue extraction** - Uses RapidOCR to detect dialogue text on comic pages.
 -   **Smart ordering** - Groups and sorts text blocks/panels by reading order to reduce cross-bubble misreads.
@@ -41,6 +43,7 @@ A lightweight, locally hosted comic reader designed for folder-based comic image
 ```
 comic-reader/
 ├── app.py               # Backend entry (Flask API + OCR engine)
+├── reader.config.json   # Library config (optional)
 ├── requirements.txt     # Python dependencies
 ├── start_reader.bat     # One-click startup script (Windows)
 ├── stop_reader.bat      # One-click stop script (Windows)
@@ -100,6 +103,36 @@ Open `http://127.0.0.1:7878` in your browser.
 
 ---
 
+## 🧭 Usage Guide
+
+### Switch Library (UI)
+
+Use the left sidebar "Library Switch" panel. Fill either:
+
+-   **Folder name** (relative to the project parent, e.g. `一人之下`)
+-   **Full path** (absolute or relative to project, e.g. `D:\Comics\一人之下`)
+
+Then click **Switch Library** to reload chapters immediately.
+
+### Switch Theme
+
+Click the **Theme** button next to **Fullscreen (F)** to toggle light/dark mode.
+
+### Config File
+
+You can also set the default library in `reader.config.json`:
+
+```json
+{
+    "library_path": "D:\\Comics\\一人之下",
+    "library_name": ""
+}
+```
+
+Priority order: `--library` CLI arg > `library_path` > `library_name` > default folder.
+
+---
+
 ## ⌨️ Shortcuts
 
 | Key           | Action                          |
@@ -117,7 +150,7 @@ Open `http://127.0.0.1:7878` in your browser.
 
 | Argument    | Default                             | Description                                  |
 | ----------- | ----------------------------------- | -------------------------------------------- |
-| `--library` | `../一人之下_漫画`                  | Comic root directory path                     |
+| `--library` | Config or `../一人之下_漫画`        | Comic root directory path                     |
 | `--host`    | `127.0.0.1`                         | Service bind address                          |
 | `--port`    | `7878`                              | Service bind port                             |
 | `--engine`  | `auto`                              | Server engine (`auto`/`waitress`/`flask`)    |
@@ -173,6 +206,8 @@ Any directory containing image files is treated as a chapter. Image filenames ar
 | Method | Path                 | Description                           |
 | ------ | -------------------- | ------------------------------------- |
 | `GET`  | `/api/library`       | Get comic library summary             |
+| `GET`  | `/api/library-config`| Get library config                    |
+| `POST` | `/api/library-config`| Update library config                 |
 | `GET`  | `/api/chapter?id=`   | Get details of a specific chapter     |
 | `GET`  | `/api/image`         | Get chapter images                    |
 | `GET`  | `/api/progress`      | Read saved reading progress           |
